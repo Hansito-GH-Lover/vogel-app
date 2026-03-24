@@ -1,15 +1,14 @@
 import streamlit as st
-from ultralytics import YOLO
+import tensorflow as tf
+import numpy as np
 from PIL import Image
 
 # -------------------------
-# STREAMLIT SETTINGS
+# STREAMLIT
 # -------------------------
 
 st.set_page_config(page_title="Vogel-Erkennung", layout="centered")
-st.title("🐦 Vogel-Erkennung mit KI")
-
-st.write("Lade ein Bild hoch und die KI sagt dir, ob ein Vogel erkannt wurde.")
+st.title("🐦 Vogel-Erkennung (stabile Version)")
 
 # -------------------------
 # MODELL LADEN
@@ -17,40 +16,54 @@ st.write("Lade ein Bild hoch und die KI sagt dir, ob ein Vogel erkannt wurde.")
 
 @st.cache_resource
 def load_model():
-    return YOLO("yolov8n.pt")  # kleines Modell
+    return tf.keras.applications.MobileNetV2(weights="imagenet")
 
 model = load_model()
+
+# -------------------------
+# LABELS LADEN
+# -------------------------
+
+@st.cache_resource
+def load_labels():
+    import json
+    import urllib.request
+
+    url = "https://storage.googleapis.com/download.tensorflow.org/data/imagenet_class_index.json"
+    with urllib.request.urlopen(url) as f:
+        return json.load(f)
+
+labels = load_labels()
+
+# -------------------------
+# PREPROCESSING
+# -------------------------
+
+def preprocess(image):
+    img = image.resize((224, 224))
+    img_array = np.array(img)
+    img_array = tf.keras.applications.mobilenet_v2.preprocess_input(img_array)
+    return np.expand_dims(img_array, axis=0)
 
 # -------------------------
 # UPLOAD
 # -------------------------
 
-uploaded_file = st.file_uploader(
-    "Bild hochladen",
-    type=["jpg", "jpeg", "png"]
-)
-
-# -------------------------
-# ANALYSE
-# -------------------------
+uploaded_file = st.file_uploader("Bild hochladen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Dein Bild")
 
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Dein Bild", use_column_width=True)
+    processed = preprocess(image)
+    prediction = model.predict(processed)
 
-    results = model(image)
+    top = np.argmax(prediction)
+    label = labels[str(top)][1]
+    confidence = float(np.max(prediction))
 
-    found_bird = False
-
-    for box in results[0].boxes:
-        cls_id = int(box.cls[0])
-        label = model.names[cls_id]
-        confidence = float(box.conf[0])
-
-        if label == "bird":
-            found_bird = True
-            st.success(f"🐦 Vogel erkannt! Sicherheit: {round(confidence*100, 2)} %")
-
-    if not found_bird:
-        st.warning("❌ Kein Vogel erkannt.")
+    # Prüfen ob "bird" drin ist
+    if "bird" in label.lower():
+        st.success(f"🐦 Vogel erkannt! ({label}) - {round(confidence*100,2)}%")
+    else:
+        st.warning(f"Kein Vogel erkannt. ({label})")
